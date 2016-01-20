@@ -22,10 +22,8 @@ from opsrest.utils import utils
 from opsrest.constants import *
 
 def _delete(row, table, schema, idl, txn):
-    """
-    Delete row from a table
-    """
-    for key in schema.ovs_tables[table].children:
+
+   for key in schema.ovs_tables[table].children:
         if key in schema.ovs_tables[table].references:
             child_table_name = schema.ovs_tables[table].references[key].ref_table
             child_ref_list = row.__getattr__(key)
@@ -43,7 +41,7 @@ def _delete(row, table, schema, idl, txn):
     row.delete()
 
 
-def setup_table(table_name, data, schema, idl, txn):
+def setup_table(table, data, schema, idl, txn):
 
     if table_name not in data:
         table_rows = idl.tables[table_name].rows.values()

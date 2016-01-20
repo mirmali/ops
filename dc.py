@@ -16,9 +16,20 @@ import _read, _write
 from opsrest.constants import *
 
 def read(schema, idl):
-    '''
-    Return running configuration
-    '''
+    """Read the OpenSwitch OVSDB database
+
+    Args:
+        schema (opslib.RestSchema): This is the
+            parsed extended-schema (vswitch.extschema) object.
+        idl (ovs.db.idl.Idl): This is the IDL object that
+            represents the OVSDB IDL.
+
+    Returns:
+        dict: Returns a Python dictionary object containing
+            data read from all OVSDB tables and arranged according
+            to the relationship between various table as
+            described in vswitch.extschema
+    """
 
     config = {}
     for table_name in schema.ovs_tables.keys():
@@ -38,6 +49,24 @@ def read(schema, idl):
     return config
 
 def write(data, schema, idl, txn=None):
+    """Write a new configuration to OpenSwitch OVSDB database
+
+    Args:
+        data (dict): The new configuration represented as a Python
+            dictionary object.
+        schema (opslib.RestSchema): This is the
+            parsed extended-schema (vswitch.extschema) object.
+        idl (ovs.db.idl.Idl): This is the IDL object that
+            represents the OVSDB IDL.
+        txn (ovs.db.idl.Transaction): OVSDB transaction object. If
+            txn is 'None' an ovs.db.idl.Transaction object is instantiated
+            during write operation.
+
+    Returns:
+        result (string): The result of the transaction. See ovs.db.idl.Transaction
+        class documentation for possible values
+
+   """
 
     if txn is None:
         from ovs.db.idl import Transaction
