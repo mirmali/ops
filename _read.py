@@ -34,6 +34,15 @@ def get_row_data(row, table_name, schema, idl, index=None):
 
         row_data[column_name] = column_data
 
+    # get all non-config index columns
+    for key in table_schema.indexes:
+
+        if key is 'uuid':
+            continue
+
+        if key not in table_schema.config.keys():
+            row_data[key] = row.__getattr__(key)
+
     # Iterate over all children (forward and backward references) in the row
     for child_name in table_schema.children:
 

@@ -16,14 +16,56 @@ import ovs
 import urllib
 import types
 import json
+import uuid
 
 from opslib import restparser
 from opsrest.utils import utils
 from opsrest.constants import *
 
-def _delete(row, table, schema, idl, txn):
+def index_to_row(index, table_schema, dbtable):
+    """
+    This subroutine fetches the row reference using index.
+    index is either of type uuid.UUID or is a uri escaped string which contains
+    the combination indices that are used to identify a resource.
+    """
+    if isinstance(index, uuid.UUID):
+        # index is of type UUID
+        if index in dbtable.rows:
+            return dbtable.rows[index]
+        else:
+            return None
+    else:
+        # index is an escaped combine indices string
+        index_values = utils.escaped_split(index)
+        indexes = table_schema.indexes
 
-   for key in schema.ovs_tables[table].children:
+        # if table has no indexes, we create a new entry
+        if not table_schema.index_columns:
+            return None
+
+        # TODO: Raise an exception here as this is an error
+        if len(index_values) != len(indexes):
+            raise Exception('Combination index error for table')
+
+        for row in dbtable.rows.itervalues():
+            i = 0
+            for index, value in zip(indexes, index_values):
+                if index == 'uuid':
+                    if str(row.uuid) != value:
+                        break
+                elif str(row.__getattr__(index)) != value:
+                    break
+
+                # matched index
+                i += 1
+
+            if i == len(indexes):
+                return row
+
+        return None
+
+def _delete(row, table, schema, idl, txn):
+    for key in schema.ovs_tables[table].children:
         if key in schema.ovs_tables[table].references:
             child_table_name = schema.ovs_tables[table].references[key].ref_table
             child_ref_list = row.__getattr__(key)
@@ -41,8 +83,7 @@ def _delete(row, table, schema, idl, txn):
     row.delete()
 
 
-def setup_table(table, data, schema, idl, txn):
-
+def setup_table(table_name, data, schema, idl, txn):
     if table_name not in data:
         table_rows = idl.tables[table_name].rows.values()
         while table_rows:
@@ -55,11 +96,13 @@ def setup_table(table, data, schema, idl, txn):
     tabledata = data[table_name]
 
     for rowindex, rowdata in tabledata.iteritems():
+        # TODO: This has an unfortunate effect of searching through
+        # the table from the beginning in index_to_row call. If we
+        # had indexes mapped to Rows then this issue will go away
         setup_row({rowindex:rowdata}, table_name, schema, idl, txn)
 
 
 def setup_references(table, data, schema, idl):
-
     if table not in data:
         return
 
@@ -75,8 +118,7 @@ def setup_row_references(rowdata, table, schema, idl):
     table_schema = schema.ovs_tables[table]
     idl_table = idl.tables[table]
 
-    index_values = utils.escaped_split(row_index)
-    row = utils.index_to_row(index_values, table_schema, idl_table)
+    row = index_to_row(row_index, table_schema, idl_table)
 
     # set references for this row
     for name, column in table_schema.references.iteritems():
@@ -93,8 +135,7 @@ def setup_row_references(rowdata, table, schema, idl):
             refschema = schema.ovs_tables[reftable]
 
             for refindex in row_data[name]:
-                refindexvalues = utils.escaped_split(refindex)
-                refrow = utils.index_to_row(refindexvalues, refschema, refidl)
+                refrow = index_to_row(refindex, refschema, refidl)
                 reflist.append(refrow)
             row.__setattr__(name, reflist)
 
@@ -127,8 +168,7 @@ def setup_row(rowdata, table_name, schema, idl, txn):
 
     # get row reference from table
     _new = False
-    index_values = utils.escaped_split(row_index)
-    row = utils.index_to_row(index_values, table_schema, idl_table)
+    row = index_to_row(row_index, table_schema, idl_table)
     if row is None:
         row = txn.insert(idl.tables[table_name])
         _new = True
@@ -153,6 +193,15 @@ def setup_row(rowdata, table_name, schema, idl, txn):
             value = row_data[key]
 
         row.__setattr__(key, value)
+
+    # NOTE: populate non-config index columns
+    if _new:
+        for key in table_schema.indexes:
+            if key is 'uuid':
+                continue
+
+            if key not in table_schema.config.keys():
+                row.__setattr__(key, row_data[key])
 
     # NOTE: set up child references
     for key in table_schema.children:
@@ -202,6 +251,13 @@ def setup_row(rowdata, table_name, schema, idl, txn):
                     _child = setup_row({index:child_data}, child_table_name, schema, idl, txn)
                     children.update(_child)
 
+                # NOTE: If the child table doesn't have indexes, replace json index
+                # with row.uuid
+                if not schema.ovs_tables[child_table_name].index_columns:
+                    for k,v in children.iteritems():
+                        new_data[v.uuid] = new_data[k]
+                        del new_data[k]
+
                 if kv_type:
                     if table_schema.references[key].kv_key_type.name == 'integer':
                         tmp = {}
@@ -218,7 +274,7 @@ def setup_row(rowdata, table_name, schema, idl, txn):
             # get list of all 'backward' references
             column_name = None
             for x, y in schema.ovs_tables[key].references.iteritems():
-                if y.relation == PARENT:
+                if y.relation == OVSDB_SCHEMA_PARENT:
                     column_name = x
                     break
 
@@ -249,9 +305,12 @@ def setup_row(rowdata, table_name, schema, idl, txn):
                     if delete_list:
                         _delete(delete_list, key, schema, idl, txn)
 
-                # set up rows
+                # set up children rows
                 if new_data is not None:
                     for x,y in new_data.iteritems():
-                        setup_row({x:y}, key, schema, idl, txn)
+                        child = setup_row({x:y}, key, schema, idl, txn)
+
+                        # fill the parent reference column
+                        child.values()[0].__setattr__(column_name, row)
 
     return {row_index:row}
